@@ -1,0 +1,12 @@
+syntax: glob
+*.ncb
+*.plg
+*.bsc
+*.pch
+*.orig
+*.rej
+*.bk
+*.bmp
+*.suo
+Debug/*
+Release/*
