@@ -77,6 +77,7 @@ T gen2(T)() {
 }
 
 Command!(K,V)[] makeProgram(K, V)(size_t num) {
+    if (num < 4) num = 4;
 	auto prog = appender!(Command!(K,V)[]);
 	auto ks = appender!(K[]);
 	prog.reserve(num);
@@ -190,9 +191,54 @@ void measure(string caption, scope void delegate() f) {
 	writeln(caption, ": ", sw.peek.msecs, " ms");
 }
 
-enum isVibeHM(T) = hasMember!(T, "grow");
+alias isVibeHM(T) = hasMember!(T, "grow");
+alias MakerType(T) = T delegate();
 
-void testHashesHisto(K, V, H1, H2)(H1 delegate() make1, H2 delegate() make2, size_t num) if (isIntegral!V) {
+class EmptyTable : Exception {
+    this() { super("empty table"); }
+}
+
+void testHashesAddRemove(K, V, Hs...)(size_t num, staticMap!(MakerType, Hs) makers) {
+    main: do {    
+	    auto prg = makeProgram!(K, V)(num);
+	    writeln("testing with prg len=", prg.length);
+        scope(exit) delete prg;
+        foreach(i, H; Hs) {
+            auto h = makers[i]();
+            try {
+                measure("# " ~ H.stringof ~ ".add_remove", (){
+                    foreach(cmd; prg) 
+                        final switch(cmd.action) {
+                            case Action.Add: h[cmd.key] = cmd.value; break;
+                            case Action.Remove: 
+                                static if (isVibeHM!H) { // vibe's HashMap only removes existing keys
+                                    if (cmd.key in h) h.remove(cmd.key);
+                                } else
+                                    h.remove(cmd.key); 
+                                break;
+                        }
+                    writeln(h.length, " entries");
+                    if (h.length==0) throw new EmptyTable; // don't print out measured time
+                });
+            } catch(EmptyTable et) { continue main; } // retry with another program
+            static if (hasMember!(H, "clearAndFree"))
+                h.clearAndFree();            
+        }          
+    } while(false);
+}
+
+void testThree(K,V, bool histo)(size_t num) {
+	auto make1() { return new RHHash!(K, V); }
+	auto make2() { HashMap!(K, V) z; return z; }
+	auto make3() { V[K] z; return z; };
+    alias Ts = TypeTuple!(K,V, RHHash!(K, V), HashMap!(K, V), V[K]);
+    static if (histo)
+        testHashesHisto!(Ts)(num, &make1, &make2, &make3);
+    else
+        testHashesAddRemove!(Ts)(num, &make1, &make2, &make3);
+}
+
+void testHashesHisto(K, V, Hs...)( size_t num, staticMap!(MakerType, Hs) makers) {
 	static if (K.sizeof==1)
 		enum nSrc = 256;
 	else static if (K.sizeof==2)
@@ -209,41 +255,26 @@ void testHashesHisto(K, V, H1, H2)(H1 delegate() make1, H2 delegate() make2, siz
         delete srcValues;
         delete data;
     }
-	
-	auto h1 = make1();
-	auto h2 = make2();
-	enforce(equalHashes(h1, h2));
 
-	measure(H1.stringof ~ " histo making", (){ 
-		foreach(x; data) {
-            static if (isVibeHM!(H1)) {
-                auto p = x in h1;
-                if (p) (*p)++;
-                else h1[x] = 1;
-            } else
-                h1[x]++;
-
-        }
-	});
-
-	measure(H1.stringof ~ " reading", (){
-		V v = 0;
-		foreach(x; data)
-			v ^= h1[x];
-		writeln(v);
-	});
-
-	measure(H2.stringof ~ " histo making", (){ 
-		foreach(x; data)
-			h2[x]++;
-	});
-
-	measure(H2.stringof ~ " reading", (){
-		V v = 0;
-		foreach(x; data)
-			v ^= h2[x];
-		writeln(v);
-	});
+    foreach(i, H; Hs) {
+        auto h = makers[i]();
+        measure("# " ~ H.stringof ~ ".make_histo", (){
+            foreach(x; data) {
+                static if (isVibeHM!(H)) {
+                    auto p = x in h;
+                    if (p) (*p)++;
+                    else h[x] = 1;
+                } else
+                    h[x]++;
+            }
+        });
+        measure("# " ~ H.stringof ~ ".read_histo", (){
+            V v = 0;
+            foreach(x; data)
+                v ^= h[x];
+            writeln(v);
+        });
+    }
 }
 
 void testRB(K,V, bool histo)(size_t num) {
@@ -252,7 +283,7 @@ void testRB(K,V, bool histo)(size_t num) {
 	auto make1() { rh = new RHHash!(K, V); return rh; }
 	auto make2() { V[K] z; return z; };
 	static if (histo)
-		testHashesHisto!(K, V, RHHash!(K, V), V[K])(&make1, &make2, num);
+		testHashesHisto!(K, V, RHHash!(K, V), V[K])(num, &make1, &make2);
 	else
 		testHashes!(K, V, RHHash!(K, V), V[K])(&make1, &make2, num, "RHHash", "AA"); 
     rh.clearAndFree();
@@ -263,7 +294,7 @@ void testLinProb(K,V, bool histo)(size_t num) {
 	auto make1() { HashMap!(K, V) z; return z; }
 	auto make2() { V[K] z; return z; };
 	static if (histo)
-		testHashesHisto!(K, V, HashMap!(K, V), V[K])(&make1, &make2, num);
+		testHashesHisto!(K, V, HashMap!(K, V), V[K])(num, &make1, &make2);
 	else
         testHashes!(K, V, HashMap!(K, V), V[K])(&make1, &make2, num, "HashMap", "AA"); 
 }
@@ -274,12 +305,11 @@ void testRobLin(K,V, bool histo)(size_t num) {
 	auto make1() { HashMap!(K, V) z; return z; }
 	auto make2() { rh = new RHHash!(K, V); return rh; };
 	static if (histo)
-		testHashesHisto!(K, V, HashMap!(K, V), RHHash!(K, V))(&make1, &make2, num);
+		testHashesHisto!(K, V, HashMap!(K, V), RHHash!(K, V))(num, &make1, &make2);
 	else
         testHashes!(K, V, HashMap!(K, V), RHHash!(K, V))(&make1, &make2, num, "HashMap", "RHH"); 
 	rh.clearAndFree();
 }
-
 
 auto hashQuality(K,V)(RHHash!(K,V) h) {
 	auto hashValues = new RHHash!(hash_t, bool);
@@ -292,12 +322,13 @@ int clusterSize(int prob) {// prob : 0..999 / 1000
 	auto hit = uniform(1, 1000);
 	int n = 0;
 	foreach(i; 0..1000) {
-		if (uniform(0,1000) < prob) n++;
-		else {
+		if (uniform(0,1000) < prob) {
+            n++;
+            hit--;
+        } else {
 			if (hit <= 0) return n;
 			n = 0;
-		}
-		hit--;
+		}		
 	}
 	return n;
 }
@@ -368,10 +399,25 @@ class TestClass(bool ownHash) {
 
 }
 
+void fff(string s) {
+    string g(T)(T x) {
+        return s ~ x.to!string;
+    }
+    writeln(g(2), " ", g("sss"));
+}
+
 void main(string[] argv)
 {
 	int num = argv.length > 1 ? argv[1].to!int : 300000;
 	bool histo = argv.length > 2;
+
+    //foreach(p; 10..100)
+    //    writeln(p,"%: ", averageCluster(p*10));
+	//auto make1() { HashMap!(int, bool) z; return z; }
+	//auto make2() { bool[int] z; return z; };
+
+    //testThree!(char, bool, false)(num);
+    //return;
 
     //testLinProb!(int,int)(num);
     //return;
@@ -381,12 +427,12 @@ void main(string[] argv)
 		foreach(t1; types)
 			//testRB!(t1, int, true)(num);
             //testLinProb!(t1, int, true)(num);
-			testRobLin!(t1, int, true)(num);
+			testThree!(t1, int, true)(num);
 	} else {
 		foreach(t1; types)
 			foreach(t2; types) 
 				//testRB!(t1, t2, false)(num);
                 //testLinProb!(t1, t2, false)(num);
-				testRobLin!(t1, t2, false)(num);
+				testThree!(t1, t2, false)(num);
 	}
 }

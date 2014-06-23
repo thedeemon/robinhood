@@ -19,20 +19,16 @@ in {
 }
 
 struct RobinOptions {
+    enum maxLoad = 8;  // *10%, i.e. 9 means 90%
 	enum maxCluster = 200; // if max DIB / PSL / probe count gets higher than this, upsize
 	enum maxOverhead = 4; // don't upsize if table is bigger than numEntries * maxOverhead
 }
 
 class RHHash(Key, Value, Opts = RobinOptions) {
-//private:
-    struct Entry {
-        Key key;
-        Value value;
-    }
+private:
     Entry[] entries;
     hash_t[] hashes;
     size_t numEntries, limit, numFilled; //filled is non-empty, i.e. live or dead
-    //enum useTypeInfo = !__traits(compiles, (){ Key t; hash_t hash = t.toHash(); }());
     enum useTypeInfo = !hasMember!(Key, "toHash");
 	pragma(msg, "RHHash using type info for ", Key.stringof, ": ", useTypeInfo);
 	enum Deleted = 0x80000000;
@@ -42,6 +38,10 @@ class RHHash(Key, Value, Opts = RobinOptions) {
     }
 
 public:
+    struct Entry {
+        Key key;
+        Value value;
+    }
 
 	version(stats) {
 		int nFind, nFindIter, nIns, nInsIter;
@@ -54,7 +54,7 @@ public:
         entries = new Entry[sz];
         hashes = new hash_t[sz];
         numEntries = 0; numFilled = 0;
-		limit = sz * 9 / 10;
+		limit = sz * Opts.maxLoad / 10;
         static if (useTypeInfo) keyti = typeid(Key);        
     }
 
@@ -189,17 +189,9 @@ final:
         }*/
     }
 
-	auto byKey() {
-		auto r = EntryRange(this);
-		r.findNext();
-		return r.map!(e => e.key);
-	}
-
-    auto byValue() {
-		auto r = EntryRange(this);
-		r.findNext();
-		return r.map!(e => e.value);
-    }
+    auto range() {   return EntryRange(this).findNext(); } // => range of Entry
+	auto byKey() {   return range().map!(e => e.key);	}
+    auto byValue() { return range().map!(e => e.value); }
 
 private:
 	struct EntryRange {
@@ -207,12 +199,13 @@ private:
 		Entry front() { return h.entries[i]; }
 		void popFront() { i++; findNext(); }
 
-		void findNext() { // after this call i either points to a live entry or = hashes.length
+		EntryRange findNext() { // after this call i either points to a live entry or = hashes.length
 			while(i < h.hashes.length) {
 				immutable hp = h.hashes[i];
-				if (hp != 0 && (hp & Deleted)==0) return;
+				if (hp != 0 && (hp & Deleted)==0) return this;
 				i++;
 			} 
+            return this;
 		}
 
 		RHHash!(Key, Value) h;
@@ -226,7 +219,7 @@ private:
 		auto oldNum = numEntries;
 		entries = new Entry[newSize];
 		hashes = new hash_t[newSize];
-		limit = newSize * 9 / 10;
+		limit = newSize * Opts.maxLoad / 10;
 		assert(numEntries + 1 < limit);
 		numEntries = 0; numFilled = 0; clusterSize = 0;
 		foreach(i, h; oldHashes) 
