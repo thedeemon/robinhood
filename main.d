@@ -268,6 +268,18 @@ void testLinProb(K,V, bool histo)(size_t num) {
         testHashes!(K, V, HashMap!(K, V), V[K])(&make1, &make2, num, "HashMap", "AA"); 
 }
 
+void testRobLin(K,V, bool histo)(size_t num) {
+	writeln("testing HashMap vs. RHH on ", K.stringof, " => ", V.stringof, ", num=",num);
+	RHHash!(K, V) rh;
+	auto make1() { HashMap!(K, V) z; return z; }
+	auto make2() { rh = new RHHash!(K, V); return rh; };
+	static if (histo)
+		testHashesHisto!(K, V, HashMap!(K, V), RHHash!(K, V))(&make1, &make2, num);
+	else
+        testHashes!(K, V, HashMap!(K, V), RHHash!(K, V))(&make1, &make2, num, "HashMap", "RHH"); 
+	rh.clearAndFree();
+}
+
 
 auto hashQuality(K,V)(RHHash!(K,V) h) {
 	auto hashValues = new RHHash!(hash_t, bool);
@@ -368,12 +380,13 @@ void main(string[] argv)
 	if (histo) {
 		foreach(t1; types)
 			//testRB!(t1, int, true)(num);
-            testLinProb!(t1, int, true)(num);
+            //testLinProb!(t1, int, true)(num);
+			testRobLin!(t1, int, true)(num);
 	} else {
 		foreach(t1; types)
 			foreach(t2; types) 
 				//testRB!(t1, t2, false)(num);
-                testLinProb!(t1, t2, false)(num);
+                //testLinProb!(t1, t2, false)(num);
+				testRobLin!(t1, t2, false)(num);
 	}
-
 }
