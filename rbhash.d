@@ -4,30 +4,35 @@ import std.traits;
 
 //version = stats;
 
-int shrinkDist(long dist) 
-in {
-    assert(dist >= 0);
-} body {
-    if (dist < 16) return cast(int)dist;
-    if (dist < 32) return 16;
-    if (dist < 64) return 17;
-    if (dist < 128) return 18;
-    if (dist < 256) return 19;
-    if (dist < 512) return 20;
-    if (dist < 1024) return 21;
-    return 22;
+version(stats) {
+	int shrinkDist(long dist) 
+	in {
+		assert(dist >= 0);
+	} body {
+		if (dist < 16) return cast(int)dist;
+		if (dist < 32) return 16;
+		if (dist < 64) return 17;
+		if (dist < 128) return 18;
+		if (dist < 256) return 19;
+		if (dist < 512) return 20;
+		if (dist < 1024) return 21;
+		return 22;
+	}
 }
 
 struct RobinOptions {
     enum maxLoad = 8;  // *10%, i.e. 9 means 90%
 	enum maxCluster = 200; // if max DIB / PSL / probe count gets higher than this, upsize
 	enum maxOverhead = 4; // don't upsize if table is bigger than numEntries * maxOverhead
+	enum combineData = true; // combine hash and key-value in one struct
 }
 
 class RHHash(Key, Value, Opts = RobinOptions) {
 private:
+	enum combine = Opts.combineData; 
     Entry[] entries;
-    hash_t[] hashes;
+	//pragma(msg, "Entry size for ", Key.stringof, "=>", Value.stringof, ": ", Entry.sizeof);
+    static if (!combine) hash_t[] hashes;
     size_t numEntries, limit, numFilled; //filled is non-empty, i.e. live or dead
     enum useTypeInfo = !hasMember!(Key, "toHash");
 	pragma(msg, "RHHash using type info for ", Key.stringof, ": ", useTypeInfo);
@@ -39,6 +44,7 @@ private:
 
 public:
     struct Entry {
+		static if (combine) { hash_t hash; }
         Key key;
         Value value;
     }
@@ -52,7 +58,7 @@ public:
         size_t sz = 16;
         while(sz < expectedSize) sz *= 2;
         entries = new Entry[sz];
-        hashes = new hash_t[sz];
+        static if (!combine) { hashes = new hash_t[sz]; }
         numEntries = 0; numFilled = 0;
 		limit = sz * Opts.maxLoad / 10;
         static if (useTypeInfo) keyti = typeid(Key);        
@@ -60,14 +66,14 @@ public:
 
 final:
 
-	void dump() {
-		import std.stdio;
-		writeln("hashes.length=", hashes.length, " num=", numEntries, " filled=", numFilled);
-		foreach(i, h; hashes)
-			writeln(i, ": h=", h, " k=", entries[i].key, " v=", entries[i].value);
-	}
-
 	version(stats) {
+		void dump() {
+			import std.stdio;
+			writeln("hashes.length=", hashes.length, " num=", numEntries, " filled=", numFilled);
+			foreach(i, h; hashes)
+				writeln(i, ": h=", h, " k=", entries[i].key, " v=", entries[i].value);
+		}
+
 		void showStats() {
 			import std.stdio, std.algorithm : count;
 			writeln("inserts: ", nIns, " iters: ", nInsIter, " avg: ", cast(double)nInsIter / nIns);
@@ -131,10 +137,8 @@ final:
     }
 
     ref Value opIndex(Key key) {
-		import std.stdio;
 		auto idx = findIndex(key);
-		//writeln("opIndex[", key,"] idx=", idx);
-		if (idx == -1) { idx = insert(key, Value.init); /*writeln(" ins idx=", idx);*/ }
+		if (idx == -1) idx = insert(key, Value.init); 
 		return entries[cast(size_t)idx].value;
     }
 
@@ -144,20 +148,28 @@ final:
 
     void clear() {
         numEntries = 0; numFilled = 0;
-        hashes[] = 0;
+		static if (combine) {
+			foreach(ref e; entries) e.hash = 0;
+		} else
+	        hashes[] = 0;
     }
 
 	void clearAndFree() {
 		numEntries = 0; numFilled = 0;
-		delete hashes;
-		delete entries;
-		hashes = [];
+		static if (!combine) {
+			delete hashes;
+			hashes = [];
+		}
+		delete entries;		
 		entries = [];
 	}
 
 	int opApply(int delegate(Key, Value) dg)  {
 		foreach(i, e; entries) {
-            immutable h = hashes[i];
+			static if (combine)
+				immutable h = e.hash;
+			else
+				immutable h = hashes[i];
 			if (h==0 || (h & Deleted) != 0) continue;
 			auto r = dg(e.key, e.value);
 			if (r != 0) return r;
@@ -169,9 +181,12 @@ final:
         auto idx = findIndex(key);
         if (idx == -1) return;
         size_t pos = cast(size_t)idx;
-        hashes[pos] |= Deleted;
+		static if (combine)
+			entries[pos].hash |= Deleted;
+		else
+	        hashes[pos] |= Deleted;
         numEntries--;
-        /*immutable mask = hashes.length - 1;
+        /*immutable mask = hashes.length - 1; // backward shifting. considered harmful.
         while(true) {
             auto next = (pos+1) & mask;
             immutable hn = hashes[next];
@@ -195,13 +210,13 @@ final:
 
 private:
 	struct EntryRange {
-		@property bool empty() { return i >= h.hashes.length; }
+		@property bool empty() { return i >= h.entries.length; }
 		Entry front() { return h.entries[i]; }
 		void popFront() { i++; findNext(); }
 
 		EntryRange findNext() { // after this call i either points to a live entry or = hashes.length
-			while(i < h.hashes.length) {
-				immutable hp = h.hashes[i];
+			while(i < h.entries.length) {
+				immutable hp = h.hash(i);
 				if (hp != 0 && (hp & Deleted)==0) return this;
 				i++;
 			} 
@@ -209,43 +224,67 @@ private:
 		}
 
 		RHHash!(Key, Value) h;
-		size_t i; // points to live entry
+		size_t i; // points to a live entry
+	}
+
+	hash_t hash(size_t pos) { 
+		static if (combine) return entries[pos].hash;
+		else return hashes[pos];
 	}
 
 	void resize(size_t newSize) {
 		assert(newSize > numEntries);
 		Entry[] oldEntries = entries;
-		hash_t[] oldHashes = hashes;
+		
 		auto oldNum = numEntries;
 		entries = new Entry[newSize];
-		hashes = new hash_t[newSize];
+		
+		static if (!combine) {
+			hash_t[] oldHashes = hashes;
+			hashes = new hash_t[newSize];
+			scope(exit) delete oldHashes;
+		}
 		limit = newSize * Opts.maxLoad / 10;
 		assert(numEntries + 1 < limit);
 		numEntries = 0; numFilled = 0; clusterSize = 0;
-		foreach(i, h; oldHashes) 
-			if (h != 0 && (h & Deleted)==0)	
-				doInsert(oldEntries[i], h);
+		static if (combine) {
+			foreach(e; oldEntries) 
+				if (e.hash != 0 && (e.hash & Deleted)==0)	
+					doInsert(e);
+		} else
+			foreach(i, h; oldHashes) 
+				if (h != 0 && (h & Deleted)==0)	
+					doInsert(oldEntries[i], h);
 		assert(numEntries == oldNum);
 		delete oldEntries;
-		delete oldHashes;
+		
 	}
 
     size_t insert(Key key, Value value) { // => pos
-		if (numFilled >= limit || (clusterSize > Opts.maxCluster && hashes.length * 2 < Opts.maxOverhead * numEntries))
-			resize(hashes.length * 2);
-		auto entry = Entry(key, value);
-		return doInsert(entry, calcHash(key));
+		if (numFilled >= limit || (clusterSize > Opts.maxCluster && entries.length * 2 < Opts.maxOverhead * numEntries))
+			resize(entries.length * 2);
+		static if (combine) {
+			auto entry = Entry(calcHash(key), key, value);
+			return doInsert(entry);
+		} else {
+			auto entry = Entry(key, value);
+			return doInsert(entry, calcHash(key));
+		}		
     }
 
+	static if (combine) {
+		size_t doInsert(ref Entry entry) { return doInsert(entry, entry.hash); }
+	}
+
 	size_t doInsert(ref Entry entry, hash_t keyHash) { // => pos
-		immutable mask = hashes.length - 1;
+		immutable mask = entries.length - 1;
 		size_t pos = keyHash & mask, j;
 		sizediff_t dist = 0, start = pos;
 		version(stats) nIns++; 
 
 		//find where to insert the new entry
 		while(true) {
-			immutable hp = hashes[pos];
+			immutable hp = hash(pos);
 			if (hp==0) { //empty slot found, just fill it
 				numFilled++;
 				goto fillBucket;
@@ -260,13 +299,13 @@ private:
 			dist++;
 		}
 		//here pos points to live entry which is richer
-		assert(hashes[pos] != 0);
-		assert((hashes[pos] & Deleted)==0);
-		assert(calcDist(hashes[pos], pos) < dist);
+		assert(hash(pos) != 0);
+		assert((hash(pos) & Deleted)==0);
+		assert(calcDist(hash(pos), pos) < dist);
 		//all live entries starting from pos should be shifted right till first dead or empty slot
 		j = (pos + 1) & mask;
 		while(true) { // look for dead or empty
-			immutable hp = hashes[j];
+			immutable hp = hash(j);
 			if (hp==0) { numFilled++; break; } // empty bucket found
 			if ((hp & Deleted) != 0) break; // dead one found
 			j = (j + 1) & mask;
@@ -275,12 +314,12 @@ private:
 		//shift
 		while(j != pos) { // walk back shifting right values in table
 			immutable prev = (j - 1) & mask;
-			hashes[j] = hashes[prev];
+			static if (!combine) hashes[j] = hashes[prev];
 			entries[j] = entries[prev];
 			j = prev;
 		}
 	  fillBucket:
-        hashes[pos] = keyHash;
+        static if (!combine) hashes[pos] = keyHash;
         entries[pos] = entry;
         numEntries++;
 		clusterSize = dist > clusterSize ? dist : clusterSize;
@@ -289,14 +328,14 @@ private:
 
     sizediff_t findIndex(Key key) { // -1 if not found
         immutable hash_t keyHash = calcHash(key);
-		immutable mask = hashes.length - 1;
+		immutable mask = entries.length - 1;
 		size_t pos = keyHash & mask;
         sizediff_t dist = 0;
 		version(stats) nFind++; 
         while(true) {
 			version(stats) nFindIter++; 
-			assert(pos < hashes.length);
-			immutable hash_t hp = hashes[pos];
+			assert(pos < entries.length);
+			immutable hash_t hp = hash(pos);
             if (hp==keyHash) {
                 if (entries[pos].key == key) {
 					version(stats) if (dist > nFindMax) nFindMax = dist;
@@ -313,14 +352,14 @@ private:
 
 	sizediff_t calcDist(size_t h, size_t p) const
     in {
-		assert(p <= hashes.length);
+		assert(p <= entries.length);
 	} out(result) {
 		assert(result >= 0);
-		assert(result < hashes.length);
+		assert(result < entries.length);
 	} body {
-		h &= hashes.length - 1;
+		h &= entries.length - 1;
 		if (h <= p) return p - h;
-		return p + hashes.length - h;
+		return p + entries.length - h;
 	}
 
     public hash_t calcHash(Key key) const

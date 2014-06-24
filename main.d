@@ -85,16 +85,18 @@ Command!(K,V)[] makeProgram(K, V)(size_t num) {
 	while(prog.data.length < num) {
 		auto k = uniform(1, num > 200 ? 100 : num/2);
 		auto action = gen!Action;
+		assert(action == Action.Add || action==Action.Remove);
 		auto nks = ks.data.length;
         if (nks==0) action = Action.Add;
 		void addSome(bool rememberKeys) {
 			foreach(i; 0..k) {
 				K key;
-				if (/*!rememberKeys ||*/ (uniform(0, 10) < 4 && nks > 0)) // !rememberKeys to always remove existing keys, for vibe's HashMap
+				if ((uniform(0, 10) < 4 && nks > 0))
 					key = ks.data[uniform(0, nks)];
 				else
 					key = gen2!K; // don't generate T.init, as vibe's HashMap cannot take those
 				prog ~= Command!(K,V)(action, key, gen!V);
+				assert(prog.data[$-1].action == Action.Add || prog.data[$-1].action == Action.Remove);
 				if (rememberKeys && uniform(0, 10) < 4)
 					ks ~= key;
 			}
@@ -105,6 +107,10 @@ Command!(K,V)[] makeProgram(K, V)(size_t num) {
 			case Action.Remove:	addSome(false); break;
 		}
 	}    
+	/*pragma(msg, "Command!(K,V).sizeof=", Command!(K,V).sizeof);
+	foreach(cmd; prog.data)
+		assert(cmd.action == Action.Add || cmd.action==Action.Remove);
+	writeln("prog.data: ", prog.data.ptr, " ", prog.data.length);*/
 	return prog.data;
 }
 
@@ -116,11 +122,14 @@ void testHashes(K, V, H1, H2)(H1 delegate() make1, H2 delegate() make2, size_t n
 
 	//generate program 
 	auto prg = makeProgram!(K, V)(num);
-	writeln("testing with prg len=", prg.length);
 	StopWatch sw;
 	sw.start();
-	foreach(cmd; prg) 
-		final switch(cmd.action) {
+	writeln("testing with prg len=", prg.length, " cmd sz=", prg[0].sizeof);
+	//writeln("prog: ", prg.ptr, " ", prg.length);
+	foreach(i, ref cmd; prg) {
+		//writeln(i," ",&cmd, " ", &cmd.action);
+		assert(cmd.action == Action.Add || cmd.action==Action.Remove);
+		/*final*/ switch(cmd.action) {
 			case Action.Add: h1[cmd.key] = cmd.value; break;
 			case Action.Remove: 
                 static if (isVibeHM!H1) { // vibe's HashMap only removes existing keys
@@ -128,11 +137,16 @@ void testHashes(K, V, H1, H2)(H1 delegate() make1, H2 delegate() make2, size_t n
                 } else
                     h1.remove(cmd.key); 
                 break;
+			default:
+				writeln("weird cmd in switch: ", cmd.action);
+				throw new Exception("AAAA!!11");
 		}
+	}
 	sw.stop();
 	auto dur1 = sw.peek();
 	writeln(name1, ": ", dur1.msecs, "ms");
 	
+	//StopWatch sw;
 	sw.reset();
 	sw.start();
 	foreach(cmd; prg) 
@@ -161,7 +175,7 @@ void testHashes(K, V, H1, H2)(H1 delegate() make1, H2 delegate() make2, size_t n
         } else 
             writeln("Error: different values for ", dv.key);
 	} 
-    delete prg;
+    //delete prg;
 	/*hashQuality(h1);
     h1.showCollisionDistr();
 
