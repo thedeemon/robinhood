@@ -351,16 +351,11 @@ private:
     }
 
 	sizediff_t calcDist(size_t h, size_t p) const
-    in {
-		assert(p <= entries.length);
-	} out(result) {
-		assert(result >= 0);
-		assert(result < entries.length);
-	} body {
-		h &= entries.length - 1;
-		if (h <= p) return p - h;
-		return p + entries.length - h;
-	}
+    in { 
+        assert(p <= entries.length); 
+    } body {
+        return (p - h) & (entries.length - 1);
+    }
 
     public hash_t calcHash(Key key) const
     out(result) { 
