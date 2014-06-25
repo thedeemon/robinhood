@@ -24,7 +24,7 @@ struct RobinOptions {
     enum maxLoad = 8;  // *10%, i.e. 9 means 90%
 	enum maxCluster = 200; // if max DIB / PSL / probe count gets higher than this, upsize
 	enum maxOverhead = 4; // don't upsize if table is bigger than numEntries * maxOverhead
-	enum combineData = true; // combine hash and key-value in one struct
+	enum combineData = false; // combine hash and key-value in one struct
 }
 
 class RHHash(Key, Value, Opts = RobinOptions) {
