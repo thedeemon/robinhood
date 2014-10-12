@@ -1,6 +1,6 @@
 module rbhash;
-import std.range, std.algorithm : swap;
-import std.traits;
+import std.range, std.traits, std.algorithm : swap;
+import std.container : Array;
 
 //version = stats;
 
@@ -32,7 +32,7 @@ private:
     enum combine = Opts.combineData; 
     Entry[] entries;
     //pragma(msg, "Entry size for ", Key.stringof, "=>", Value.stringof, ": ", Entry.sizeof);
-    static if (!combine) hash_t[] hashes;
+    static if (!combine) Array!(hash_t) hashes;
     size_t numEntries, limit, numFilled; //filled is non-empty, i.e. live or dead
     enum useTypeInfo = !hasMember!(Key, "toHash");
     //pragma(msg, "RHHash using type info for ", Key.stringof, ": ", useTypeInfo);
@@ -58,7 +58,7 @@ public:
         size_t sz = 16;
         while(sz < expectedSize) sz *= 2;
         entries = new Entry[sz];
-        static if (!combine) { hashes = new hash_t[sz]; }
+        static if (!combine) { hashes.length = sz; }
         numEntries = 0; numFilled = 0;
         limit = sz * Opts.maxLoad / 10;
         static if (useTypeInfo) keyti = typeid(Key);        
@@ -165,8 +165,9 @@ final:
     void clearAndFree() {
         numEntries = 0; numFilled = 0;
         static if (!combine) {
-            delete hashes;
-            hashes = [];
+            //delete hashes;
+            //hashes = [];
+			hashes.clear();
         }
         delete entries;		
         entries = [];
@@ -234,9 +235,12 @@ private:
         entries = new Entry[newSize];
         
         static if (!combine) {
-            hash_t[] oldHashes = hashes;
-            hashes = new hash_t[newSize];
-            scope(exit) delete oldHashes;
+            //hash_t[] oldHashes = hashes;
+            //hashes = new hash_t[newSize];
+            //scope(exit) delete oldHashes;
+			Array!(hash_t) oldHashes = hashes;
+			hashes = Array!hash_t();
+			hashes.length = newSize;
         }
         limit = newSize * Opts.maxLoad / 10;
         assert(numEntries + 1 < limit);
@@ -245,13 +249,16 @@ private:
             foreach(e; oldEntries) 
                 if (e.hash != 0 && (e.hash & Deleted)==0)	
                     doInsert(e);
-        } else
-            foreach(i, h; oldHashes) 
+        } else {
+			size_t i = 0;
+            foreach(h; oldHashes) { 
                 if (h != 0 && (h & Deleted)==0)	
                     doInsert(oldEntries[i], h);
+				i++;
+			}
+		}
         assert(numEntries == oldNum);
         delete oldEntries;
-        
     }
 
 	static if (is(Value==void))
