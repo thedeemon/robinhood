@@ -129,7 +129,7 @@ void testHashes(K, V, H1, H2)(H1 delegate() make1, H2 delegate() make2, size_t n
     foreach(i, ref cmd; prg) {
         //writeln(i," ",&cmd, " ", &cmd.action);
         assert(cmd.action == Action.Add || cmd.action==Action.Remove);
-        /*final*/ switch(cmd.action) {
+        final switch(cmd.action) {
             case Action.Add: h1[cmd.key] = cmd.value; break;
             case Action.Remove: 
                 static if (isVibeHM!H1) { // vibe's HashMap only removes existing keys
@@ -137,9 +137,9 @@ void testHashes(K, V, H1, H2)(H1 delegate() make1, H2 delegate() make2, size_t n
                 } else
                     h1.remove(cmd.key); 
                 break;
-            default:
+           /* default:
                 writeln("weird cmd in switch: ", cmd.action);
-                throw new Exception("AAAA!!11");
+                throw new Exception("AAAA!!11");*/
         }
     }
     sw.stop();
@@ -413,17 +413,46 @@ class TestClass(bool ownHash) {
 
 }
 
-void fff(string s) {
-    string g(T)(T x) {
-        return s ~ x.to!string;
-    }
-    writeln(g(2), " ", g("sss"));
+void testSet(K)(size_t num) {
+	writeln("testSet ", K.stringof, " ",num);
+	auto vals = new K[num];
+	foreach(ref x; vals)
+		x = gen!K;
+	auto h1 = new RHHash!(K, void);
+	bool[K] h2;
+	
+	scope(exit) {
+		if (num < 10) {
+			writeln(h1.byKey, ", ", h2.byKey);
+		}
+	}
+	foreach(x; vals) {
+		h1.add(x);
+		h2[x] = true;
+	}
+	if (h1.length != h2.length) {
+		return writeln("sets have different lengths: ", h1.length, " vs. ", h2.length);
+	}
+	foreach(k; h1) {
+		auto p = k in h2;
+		if (p is null) {
+			return writeln("value present in RHH but not in AA: ", k);
+		}
+	}
+	writeln("testSet ok");
 }
 
 void main(string[] argv)
 {
     int num = argv.length > 1 ? argv[1].to!int : 300000;
     bool histo = argv.length > 2;
+
+    alias types = TypeTuple!(bool, int, double, char, string, 
+                             TestStruct!false, TestStruct!true, TestClass!false, TestClass!true);
+
+	foreach(T; types)
+		testSet!(T)(100000);
+	//return;
 
     //foreach(p; 10..100)
     //    writeln(p,"%: ", averageCluster(p*10));
@@ -435,18 +464,16 @@ void main(string[] argv)
 
     //testLinProb!(int,int)(num);
     //return;
-    alias types = TypeTuple!(/*bool,*/ int, /*double,*/ char, string, 
-                             TestStruct!false, TestStruct!true, TestClass!false, TestClass!true);
     if (histo) {
         foreach(t1; types)
-            //testRB!(t1, int, true)(num);
+            testRB!(t1, int, true)(num);
             //testLinProb!(t1, int, true)(num);
-            testThree!(t1, int, true)(num);
+            //testThree!(t1, int, true)(num);
     } else {
         foreach(t1; types)
             foreach(t2; types) 
-                //testRB!(t1, t2, false)(num);
+                testRB!(t1, t2, false)(num);
                 //testLinProb!(t1, t2, false)(num);
-                testThree!(t1, t2, false)(num);
+                //testThree!(t1, t2, false)(num);
     }
 }

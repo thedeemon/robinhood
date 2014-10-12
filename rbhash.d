@@ -35,7 +35,7 @@ private:
     static if (!combine) hash_t[] hashes;
     size_t numEntries, limit, numFilled; //filled is non-empty, i.e. live or dead
     enum useTypeInfo = !hasMember!(Key, "toHash");
-    pragma(msg, "RHHash using type info for ", Key.stringof, ": ", useTypeInfo);
+    //pragma(msg, "RHHash using type info for ", Key.stringof, ": ", useTypeInfo);
     enum Deleted = 0x80000000;
     sizediff_t clusterSize; //max found so far during insert
     static if (useTypeInfo) {
@@ -46,7 +46,7 @@ public:
     struct Entry {
         static if (combine) { hash_t hash; }
         Key key;
-        Value value;
+        static if (!is(Value==void)) Value value;
     }
 
     version(stats) {
@@ -123,6 +123,7 @@ final:
 
     @property size_t length() const { return numEntries; }
 
+	static if (!is(Value==void))
     Value get(Key key, lazy Value default_value = Value.init) {
         auto idx = findIndex(key);
         if (idx == -1) return default_value;
@@ -136,15 +137,22 @@ final:
         return &entries[cast(size_t)idx].value;
     }
 
+	static if (!is(Value==void))
     ref Value opIndex(Key key) {
         auto idx = findIndex(key);
         if (idx == -1) idx = insert(key, Value.init); 
         return entries[cast(size_t)idx].value;
     }
 
-    void add(Key key, Value value) {
-        insert(key, value);
-    }
+	bool contains(Key key) {
+		return findIndex(key) >= 0;
+	}
+
+	static if (is(Value==void))
+	void add(Key key) {
+		if (findIndex(key) < 0)
+			insert(key); 
+	}
 
     void clear() {
         numEntries = 0; numFilled = 0;
@@ -164,18 +172,19 @@ final:
         entries = [];
     }
 
-    int opApply(int delegate(Key, Value) dg)  {
-        foreach(i, e; entries) {
-            static if (combine)
-                immutable h = e.hash;
-            else
-                immutable h = hashes[i];
-            if (h==0 || (h & Deleted) != 0) continue;
-            auto r = dg(e.key, e.value);
-            if (r != 0) return r;
-        }
-        return 0;
-    }
+	static if (is(Value==void)) alias ForEachDel = int delegate(Key);
+	       else                 alias ForEachDel = int delegate(Key, Value); 
+
+	int opApply(scope ForEachDel dg)  {
+		foreach(i, e; entries) {
+			immutable h = hash(i);
+			if (h==0 || (h & Deleted) != 0) continue;
+			static if (is(Value==void)) auto r = dg(e.key);
+			       else                 auto r = dg(e.key, e.value);
+			if (r != 0) return r;
+		}
+		return 0;
+	}
 
     void remove(Key key) {
         auto idx = findIndex(key);
@@ -186,26 +195,11 @@ final:
         else
             hashes[pos] |= Deleted;
         numEntries--;
-        /*immutable mask = hashes.length - 1; // backward shifting. considered harmful.
-        while(true) {
-            auto next = (pos+1) & mask;
-            immutable hn = hashes[next];
-            if (hn==0 || calcDist(hn, next)==0) {
-                hashes[pos] = 0; // make this slot empty
-                numFilled--;
-                return;
-            }
-            // now next has dist >= 1, so move it here
-            hashes[pos] = hn;
-            //move(entries[next], entries[pos]);
-            entries[pos] = entries[next];
-            hashes[next] |= Deleted;
-            pos = next;
-        }*/
     }
 
     auto range() {   return EntryRange(this).findNext(); } // => range of Entry
     auto byKey() {   return range().map!(e => e.key);	}
+	static if (!is(Value==void))
     auto byValue() { return range().map!(e => e.value); }
 
 private:
@@ -229,7 +223,7 @@ private:
 
     hash_t hash(size_t pos) { 
         static if (combine) return entries[pos].hash;
-        else return hashes[pos];
+               else         return hashes[pos];
     }
 
     void resize(size_t newSize) {
@@ -260,21 +254,27 @@ private:
         
     }
 
-    size_t insert(Key key, Value value) { // => pos
-        if (numFilled >= limit || (clusterSize > Opts.maxCluster && entries.length * 2 < Opts.maxOverhead * numEntries))
-            resize(entries.length * 2);
-        static if (combine) {
-            auto entry = Entry(calcHash(key), key, value);
-            return doInsert(entry);
-        } else {
-            auto entry = Entry(key, value);
-            return doInsert(entry, calcHash(key));
-        }		
-    }
+	static if (is(Value==void))
+		size_t insert(Key key) { // => pos
+			resizeIfNecessary();
+			auto h = calcHash(key);
+			static if (combine) auto entry = Entry(h, key);
+			       else 		auto entry = Entry(key);			
+			return doInsert(entry, h);
+		}
+	else
+		size_t insert(Key key, Value value) { // => pos
+			resizeIfNecessary();
+			auto h = calcHash(key);
+			static if (combine) auto entry = Entry(h, key, value);
+			       else         auto entry = Entry(key, value);				
+			return doInsert(entry, h);
+		}
 
-    static if (combine) {
-        size_t doInsert(ref Entry entry) { return doInsert(entry, entry.hash); }
-    }
+	void resizeIfNecessary() {
+		if (numFilled >= limit || (clusterSize > Opts.maxCluster && entries.length * 2 < Opts.maxOverhead * numEntries))
+			resize(entries.length * 2);
+	}
 
     size_t doInsert(ref Entry entry, hash_t keyHash) { // => pos
         immutable mask = entries.length - 1;
