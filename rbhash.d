@@ -30,7 +30,7 @@ struct RobinOptions {
 class RHHash(Key, Value, Opts = RobinOptions) {
 private:
     enum combine = Opts.combineData; 
-    Entry[] entries;
+    Array!Entry entries;
     //pragma(msg, "Entry size for ", Key.stringof, "=>", Value.stringof, ": ", Entry.sizeof);
     static if (!combine) Array!(hash_t) hashes;
     size_t numEntries, limit, numFilled; //filled is non-empty, i.e. live or dead
@@ -57,7 +57,8 @@ public:
     this(size_t expectedSize = 64) {
         size_t sz = 16;
         while(sz < expectedSize) sz *= 2;
-        entries = new Entry[sz];
+        //entries = new Entry[sz];
+		entries.length = sz;
         static if (!combine) { hashes.length = sz; }
         numEntries = 0; numFilled = 0;
         limit = sz * Opts.maxLoad / 10;
@@ -169,15 +170,18 @@ final:
             //hashes = [];
 			hashes.clear();
         }
-        delete entries;		
-        entries = [];
+        //delete entries;		
+        //entries = [];
+		entries.clear();
     }
 
 	static if (is(Value==void)) alias ForEachDel = int delegate(Key);
 	       else                 alias ForEachDel = int delegate(Key, Value); 
 
 	int opApply(scope ForEachDel dg)  {
-		foreach(i, e; entries) {
+		size_t i = -1;
+		foreach(e; entries) {
+			i++;
 			immutable h = hash(i);
 			if (h==0 || (h & Deleted) != 0) continue;
 			static if (is(Value==void)) auto r = dg(e.key);
@@ -229,16 +233,18 @@ private:
 
     void resize(size_t newSize) {
         assert(newSize > numEntries);
-        Entry[] oldEntries = entries;
+        Array!Entry oldEntries = entries;
         
         auto oldNum = numEntries;
-        entries = new Entry[newSize];
+        //entries = new Entry[newSize];
+		entries = Array!Entry();
+		entries.length = newSize;
         
         static if (!combine) {
             //hash_t[] oldHashes = hashes;
             //hashes = new hash_t[newSize];
             //scope(exit) delete oldHashes;
-			Array!(hash_t) oldHashes = hashes;
+			Array!hash_t oldHashes = hashes;
 			hashes = Array!hash_t();
 			hashes.length = newSize;
         }
@@ -258,7 +264,7 @@ private:
 			}
 		}
         assert(numEntries == oldNum);
-        delete oldEntries;
+        //delete oldEntries;
     }
 
 	static if (is(Value==void))

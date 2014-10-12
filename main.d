@@ -442,12 +442,27 @@ void testSet(K)(size_t num) {
 	writeln("testSet ok");
 }
 
+class CD {
+	this(int n)  { x = n; }
+	~this() { writeln("~CD ", x); }
+	int x;
+}
+
+struct PP {
+	int k;
+	CD cd;
+
+	this(int x) { writeln("PP(",x,")"); k = x; cd = new CD(x*10); }
+	~this() { writeln("~PP ", k); }
+	this(this) { writeln("PP this(this) ", k); }
+}
+
 void main(string[] argv)
 {
     int num = argv.length > 1 ? argv[1].to!int : 300000;
     bool histo = argv.length > 2;
 
-    alias types = TypeTuple!(bool, int, double, char, string, 
+    alias types = TypeTuple!(bool, int, double, char, /*string,*/ 
                              TestStruct!false, TestStruct!true, TestClass!false, TestClass!true);
 
 	foreach(T; types)
