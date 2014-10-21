@@ -20,6 +20,11 @@ version(stats) {
     }
 }
 
+void resize(T)(ref Array!T arr, size_t sz) {
+    arr.reserve(sz);
+    arr.length = sz;
+}
+
 struct RobinOptions {
     enum maxLoad = 8;  // *10%, i.e. 9 means 90%
     enum maxCluster = 200; // if max DIB / PSL / probe count gets higher than this, upsize
@@ -58,8 +63,8 @@ public:
         size_t sz = 16;
         while(sz < expectedSize) sz *= 2;
         //entries = new Entry[sz];
-		entries.length = sz;
-        static if (!combine) { hashes.length = sz; }
+		entries.resize(sz);
+        static if (!combine) { hashes.resize(sz); }
         numEntries = 0; numFilled = 0;
         limit = sz * Opts.maxLoad / 10;
         static if (useTypeInfo) keyti = typeid(Key);        
@@ -238,7 +243,7 @@ private:
         auto oldNum = numEntries;
         //entries = new Entry[newSize];
 		entries = Array!Entry();
-		entries.length = newSize;
+		entries.resize(newSize);
         
         static if (!combine) {
             //hash_t[] oldHashes = hashes;
@@ -246,7 +251,7 @@ private:
             //scope(exit) delete oldHashes;
 			Array!hash_t oldHashes = hashes;
 			hashes = Array!hash_t();
-			hashes.length = newSize;
+			hashes.resize(newSize);
         }
         limit = newSize * Opts.maxLoad / 10;
         assert(numEntries + 1 < limit);
