@@ -227,7 +227,7 @@ private:
             return this;
         }
 
-        RHHash!(Key, Value) h;
+        RHHash!(Key, Value, Opts) h;
         size_t i; // points to a live entry
     }
 
