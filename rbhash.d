@@ -1,5 +1,5 @@
 module rbhash;
-import std.range, std.traits, std.algorithm : swap;
+import std.range, std.traits, std.algorithm : swap, map;
 import std.container : Array;
 
 //version = stats;
